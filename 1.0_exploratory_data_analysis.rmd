@@ -24,6 +24,19 @@ When you click the **Knit** button a document will be generated that includes bo
 # install.packages("glmnet")
 # install.packages("splitstackshape")
 # install.packages("mice")
+#install.packages("randUnderClassif")
+#library(randUnderClassif)
+#install.packages("DMwR")
+#remotes::install_version("DMwR", version="0.4.1")
+#install.packages("imputation")
+#install.packages("missForest")
+#install.packages("DMwR2", dependencies=TRUE)
+#install.packages("RANN")
+#install_github("jmbh/randunderclassif")
+#library(randUnderClassif)
+library(RANN)
+library(DMwR2) 
+library(missForest)
 library(mice)
 library(glmnet)
 library(here)
@@ -38,6 +51,7 @@ library(dplyr)
 library(tidyr)
 library(splitstackshape)
 library(caret)
+require(imputation)
 ```
 
 ## Import Data
@@ -77,16 +91,10 @@ data$TAX_RATE = data$TAX/data$REV_BT
 data$DEBT_ASSET_RATIO = data$MNT_PASS/data$MNT_ACT
 data$DEBT_SAVINGS_RATIO = data$MNT_PASS/data$MNT_EPAR
 data$CREDIT_UTILIZATION = data$MNT_UTIL_REN/data$MNT_AUT_REN
-data <- data %>% 
-    mutate_at(c('CREDIT_UTILIZATION'), ~replace_na(.,0))
+
 data$LOAN_PER_BORROWER = data$MNT_DEMANDE/data$NB_EMPT
 
 
-data <- data %>% 
-    mutate_at(c('DEBT_SAVINGS_RATIO'), ~replace_na(.,0))
-
-data <- data %>% 
-    mutate_at(c('SATI_TRANSACT_RATE'), ~replace_na(.,0))
 
 data$LTV_RATIO = data$MNT_DEMANDE/data$MNT_ACT
 data$SATI_TRANSACT_RATE = data$NB_SATI/data$NB_OPER
@@ -94,6 +102,15 @@ data$NB_ER_6MS_12MS = data$NB_ER_12MS - data$NB_ER_6MS
 data$DELTA_NB_ER_6MS_12MS = data$NB_ER_6MS - data$NB_ER_6MS_12MS
 
 data$PROFIT_IND = ifelse(data$PROFIT_LOSS>=0, 1, 0)
+
+data <- data %>% 
+    mutate_at(c('CREDIT_UTILIZATION'), ~replace_na(.,0))
+
+data <- data %>% 
+    mutate_at(c('DEBT_SAVINGS_RATIO'), ~replace_na(.,0))
+
+data <- data %>% 
+    mutate_at(c('SATI_TRANSACT_RATE'), ~replace_na(.,0))
 
 
 
@@ -105,6 +122,14 @@ credit.test$TAX_RATE = credit.test$TAX/data$REV_BT
 credit.test$DEBT_ASSET_RATIO = credit.test$MNT_PASS/credit.test$MNT_ACT
 credit.test$DEBT_SAVINGS_RATIO = credit.test$MNT_PASS/credit.test$MNT_EPAR
 credit.test$CREDIT_UTILIZATION = credit.test$MNT_UTIL_REN/credit.test$MNT_AUT_REN
+
+
+credit.test$LOAN_PER_BORROWER = credit.test$MNT_DEMANDE/credit.test$NB_EMPT
+
+credit.test$LTV_RATIO = credit.test$MNT_DEMANDE/data$MNT_ACT
+credit.test$SATI_TRANSACT_RATE = credit.test$NB_SATI/credit.test$NB_OPER
+credit.test$NB_ER_6MS_12MS = credit.test$NB_ER_12MS - credit.test$NB_ER_6MS
+credit.test$DELTA_NB_ER_6MS_12MS = credit.test$NB_ER_6MS - credit.test$NB_ER_6MS_12MS
 credit.test <- credit.test %>% 
     mutate_at(c('CREDIT_UTILIZATION'), ~replace_na(.,0))
 
@@ -113,13 +138,6 @@ credit.test <- credit.test %>%
 
 credit.test <- credit.test %>% 
     mutate_at(c('SATI_TRANSACT_RATE'), ~replace_na(.,0))
-
-credit.test$LOAN_PER_BORROWER = credit.test$MNT_DEMANDE/credit.test$NB_EMPT
-
-credit.test$LTV_RATIO = credit.test$MNT_DEMANDE/data$MNT_ACT
-credit.test$SATI_TRANSACT_RATE = credit.test$NB_SATI/credit.test$NB_OPER
-credit.test$NB_ER_6MS_12MS = credit.test$NB_ER_12MS - credit.test$NB_ER_6MS
-credit.test$DELTA_NB_ER_6MS_12MS = credit.test$NB_ER_6MS - credit.test$NB_ER_6MS_12MS
 
 #data$PROFIT_IND = ifelse(data$PROFIT_LOSS>=0, 1, 0)
 #credit.train$NB_INTR_1_12M = credit.train$NB_INTR_1M - credit.train$NB_INTR_12M
@@ -201,44 +219,96 @@ subset(corr.pairs.all, var1 != var2)
 
 ```
 
+```{r}
+credit.train$SPLIT = 'TRAIN'
+credit.val$SPLIT = 'VALIDATION'
+credit.test$SPLIT = 'TEST'
+credit.train$ID <- rownames(credit.train)
+credit.val$ID <- rownames(credit.val)
+credit.test$ID <- rownames(credit.test)
 
+common_cols <- intersect(intersect(colnames(credit.train), colnames(credit.val)), colnames(credit.test))
+
+# Select only the common columns from each data frame
+df1_subset <- credit.test[, common_cols]
+df2_subset <- credit.val[, common_cols]
+df3_subset <- credit.train[, common_cols]
+
+# Append the data frames by row, keeping only the common columns
+credit.all <- bind_rows(df1_subset, df2_subset, df3_subset)
+
+```
 
 ```{r}
 # Set the seed for reproducibility
 set.seed(123)
 
 # Run the mice function to impute the missing values in the train set
-imputer <- mice(subset(credit.train, select = -c(PROFIT_LOSS, PROFIT_IND, DEFAULT)), seed = 123,  method = "cart")
+imputer <- mice(credit.all, seed = 123,  method = "cart", maxit = 2, m = 1)
 
+
+credit.all.imputed = complete(imputer)
+
+credit.train.imputed = credit.all %>% filter(SPLIT=='TRAIN')
+credit.val.imputed = credit.all %>% filter(SPLIT=='VALIDATION')
+credit.test.imputed = credit.all %>% filter(SPLIT=='TEST')
+
+credit.train.imputed$DEFAULT = credit.train$DEFAULT
+credit.train.imputed$PROFIT_LOSS = credit.train$PROFIT_LOSS
+
+credit.val.imputed$DEFAULT = credit.val$DEFAULT
+credit.val.imputed$PROFIT_LOSS = credit.val$PROFIT_LOSS
 # Use the imputer object to impute the missing values in the test set
-test_imputed <- complete(imputer, subset(credit.test, select = -c(PROFIT_LOSS, PROFIT_IND, DEFAULT)))
+#credit <- mice::complete(x = imputer, data = as.matrix(credit.test))#, pred = TRUE)
 
+#val_imputed <- complete(imputer, subset(credit.val, select = -c(PROFIT_LOSS, PROFIT_IND, DEFAULT)))
+
+```
+```{r}
+credit.val
+```
+```{r}
+credit.val.imputed
+```
+
+#```{r}
+imputed_data <- knnImputation(credit.train,"AGE_D", scale = FALSE, k = 1)
+imputed_data
+
+imputer <- preProcess(subset(credit.train, select = -c(PROFIT_LOSS, PROFIT_IND, DEFAULT)), method = "knnImpute", k = 1)
+predict(imputer, newdata = na_mean(credit.test))
+#```
+
+#```{r}
+credit.train$ST_EMPL = as.factor(credit.train$ST_EMPL)
+credit.train$TYP_FIN = as.factor(credit.train$TYP_FIN)
+missForest(credit.train)
+#```
+
+```{r}
+#balanced_data <- balance_data(data, ratio = "1:3")
+default.class <- credit.train[credit.train$DEFAULT == 1, ]
+no.default.class <- credit.train[credit.train$DEFAULT == 0, ]
+n <- min(nrow(default.class), nrow(no.default.class)) # number of observations to select for each class
+#credit.train.balanced <- rbind(sample(default.class, n), sample(no.default.class, n))
+n
+sample_n(n,no.default.class,replace=FALSE)
+credit.train.balanced <- rbind(default.class[sample(nrow(default.class), n), ], no.default.class[sample(nrow(no.default.class), n*2), ])
+table(credit.train.balanced$DEFAULT)
+default.class
 ```
 
 ```{r}
-
-
-# Calculate the class ratio in the training set
-ratio <- sum(credit.train$DEFAULT == 1) / sum(credit.train$DEFAULT == 0)
-
-# If the ratio is not equal to the desired ratio, resample the training set
-if (ratio != desired_ratio) {
-  # Calculate the number of samples in each class in the training set
-  minority <- sum(credit.train$DEFAULT == 1)
-  majority <- sum(credit.train$DEFAULT == 0)
-  
-  # Calculate the desired number of minority samples
-  minority_desired <- minority / desired_ratio
-  
-  # Calculate the number of majority samples to keep
-  majority_keep <- minority_desired / majority
-  
-  # Subset the majority class to keep only the desired number of samples
-  train_majority <- credit.train[credit.train$DEFAULT == 0, ][sample(nrow(credit.train[credit.train$DEFAULT == 0, ]), size = majority_keep * majority), ]
-  
-  # Combine the minority class and the subsetted majority class to create the resampled training set
-  credit.train.balanced <- rbind(credit.train[credit.train$DEFAULT == 1, ], train_majority)
-}
+credit.train.imputed
 ```
+
+
+```{r}
+write.csv(credit.train.balanced, "data/processed/train_balanced.csv")
+write.csv(credit.train.imputed, "data/processed/train_unbalanced.csv")
+write.csv(credit.val.imputed, "data/processed/validation.csv")
+write.csv(credit.test.imputed, "data/processed/test.csv")
+```
+
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
