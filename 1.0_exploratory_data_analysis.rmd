@@ -34,6 +34,10 @@ When you click the **Knit** button a document will be generated that includes bo
 #install.packages("RANN")
 #install_github("jmbh/randunderclassif")
 #library(randUnderClassif)
+#install.packages("Amelia")
+#install.packages("Hmisc")
+library(Amelia)
+library(Hmisc)
 library(RANN)
 library(DMwR2) 
 library(missForest)
@@ -69,7 +73,7 @@ data$DEFAULT <- as.factor(data$DEFAULT)
 
 
 #attach(credit.train)
-data$ST_EMPL <- ifelse(data$ST_EMPL == "", "UNKNOWN", data$ST_EMPL)
+#data$ST_EMPL <- ifelse(data$ST_EMPL == "", "UNKNOWN", data$ST_EMPL)
 
 # data = subset(data, select = -c(ID_TRAIN))
 credit.test$TYP_RES <- as.factor(credit.test$TYP_RES)
@@ -79,13 +83,33 @@ credit.test$ST_EMPL <- as.factor(credit.test$ST_EMPL) #deal with nulls
 
 
 #attach(credit.train)
-credit.test$ST_EMPL <- ifelse(credit.test$ST_EMPL == "", "UNKNOWN", credit.test$ST_EMPL)
+#credit.test$ST_EMPL <- ifelse(credit.test$ST_EMPL == "", "UNKNOWN", credit.test$ST_EMPL)
 ```
 
 ## Feature Engineering
 
 ```{r}
-data$NB_MISSING_VALUES <- apply(data, 1, function(x) sum(is.na(x)))
+#data$NB_MISSING_VALUES <- apply(data, 1, function(x) sum(is.na(x)))
+#data$NB_MISSING_VALUES = 0
+#data <- data %>%
+#  mutate(NB_MISSING_VALUES = rowSums(is.null(.) | . == ""))
+
+data <- data %>%
+  mutate(NUM_NA = rowSums(is.na(data)))
+data <- data %>%
+  mutate(NUM_EMPTY_STRINGS = rowSums(data == ""))
+
+data <- data %>%
+  mutate(NUM_EMPTY_STRINGS = ifelse(is.na(NUM_EMPTY_STRINGS), 0, NUM_EMPTY_STRINGS))
+
+data <- data %>%
+  mutate(NUM_NA = ifelse(is.na(NUM_NA), 0, NUM_NA))
+
+data$NB_MISSING_VALUES = data$NUM_EMPTY_STRINGS + data$NUM_NA
+
+View(data[rowSums(is.na(data)) > 0,])
+
+data$ST_EMPL <- ifelse(data$ST_EMPL == "", "UNKNOWN", data$ST_EMPL)
 data$TAX = data$REV_BT - data$REV_NET
 data$TAX_RATE = data$TAX/data$REV_BT
 data$DEBT_ASSET_RATIO = data$MNT_PASS/data$MNT_ACT
@@ -116,7 +140,26 @@ data <- data %>%
 
 
 
-credit.test$NB_MISSING_VALUES <- apply(credit.test, 1, function(x) sum(is.na(x)))
+#credit.test$NB_MISSING_VALUES <- apply(credit.test, 1, function(x) sum(is.na(x)))
+#credit.test <- credit.test %>%
+#  mutate(NB_MISSING_VALUES = rowSums(is.null(.) | . == ""))
+
+credit.test <- credit.test %>%
+  mutate(NUM_NA = rowSums(is.na(credit.test)))
+credit.test <- credit.test %>%
+  mutate(NUM_EMPTY_STRINGS = rowSums(credit.test == ""))
+
+credit.test <- credit.test %>%
+  mutate(NUM_EMPTY_STRINGS = ifelse(is.na(NUM_EMPTY_STRINGS), 0, NUM_EMPTY_STRINGS))
+
+credit.test <- credit.test %>%
+  mutate(NUM_NA = ifelse(is.na(NUM_NA), 0, NUM_NA))
+
+credit.test$NB_MISSING_VALUES = credit.test$NUM_EMPTY_STRINGS + credit.test$NUM_NA
+
+View(credit.test[rowSums(is.na(credit.test)) > 0,])
+
+credit.test$ST_EMPL <- ifelse(credit.test$ST_EMPL == "", "UNKNOWN", credit.test$ST_EMPL)
 credit.test$TAX = credit.test$REV_BT - credit.test$REV_NET
 credit.test$TAX_RATE = credit.test$TAX/data$REV_BT
 credit.test$DEBT_ASSET_RATIO = credit.test$MNT_PASS/credit.test$MNT_ACT
@@ -152,7 +195,7 @@ train_index <- createDataPartition(data[,'DEFAULT'], p = 0.8, list = FALSE)
 credit.train <- data[train_index, ]
 credit.val <- data[-train_index, ]
 
-
+data
 
 ```
 
@@ -236,18 +279,27 @@ df3_subset <- credit.train[, common_cols]
 
 # Append the data frames by row, keeping only the common columns
 credit.all <- bind_rows(df1_subset, df2_subset, df3_subset)
-
+credit.all
+```
+```{r}
+rm(data, df1_subset, df2_subset,df3_subset)
+memory.size()
 ```
 
-```{r}
+#```{r}
 # Set the seed for reproducibility
 set.seed(123)
-
+#mice.options(cores = 4)
+credit.all$SPLIT = factor(credit.all$SPLIT)
+credit.all$ID = factor(credit.all$ID)
+#credit.all$TYPE_FIN = factor(credit.all$TYPE_FIN)
+credit.all$ST_EMPL = factor(credit.all$ST_EMPL)
 # Run the mice function to impute the missing values in the train set
-imputer <- mice(credit.all, seed = 123,  method = "cart", maxit = 2, m = 1)
+#imputer <- mice(credit.all,  method = "cart", m = 3, maxit = 100, printFlag = TRUE, seed = 123, meth = "fast")
+imputer <- mice(credit.all,  method = "cart", seed = 123, maxit = 5, maxiter = 5, m = 1,parallel=TRUE)
 
 
-credit.all.imputed = complete(imputer)
+credit.all.imputed = complete(imputer,"long", include=TRUE)
 
 credit.train.imputed = credit.all %>% filter(SPLIT=='TRAIN')
 credit.val.imputed = credit.all %>% filter(SPLIT=='VALIDATION')
@@ -263,13 +315,23 @@ credit.val.imputed$PROFIT_LOSS = credit.val$PROFIT_LOSS
 
 #val_imputed <- complete(imputer, subset(credit.val, select = -c(PROFIT_LOSS, PROFIT_IND, DEFAULT)))
 
-```
-```{r}
+#```
+
+#```{r}
+# Impute missing values with Amelia
+imputed_data <- amelia(subset(credit.all,select=-c(TYP_FIN)) , m.max = 5,idvars = c('ID','SPLIT'), noms = c('ST_EMPL','TYP_RES'),p2s=1)
+
+# Print the imputed data
+print(imputed_data$imputations[[1]])
+#```
+
+
+#```{r}
 credit.val
-```
-```{r}
+#```
+#```{r}
 credit.val.imputed
-```
+#```
 
 #```{r}
 imputed_data <- knnImputation(credit.train,"AGE_D", scale = FALSE, k = 1)
@@ -279,10 +341,75 @@ imputer <- preProcess(subset(credit.train, select = -c(PROFIT_LOSS, PROFIT_IND, 
 predict(imputer, newdata = na_mean(credit.test))
 #```
 
+```{r}
+credit.all <- credit.all %>%
+  mutate(AGE_D_IMPUTED_RAND_SAMPLE = ifelse(is.na(AGE_D), sample(credit.all$AGE_D, 1), AGE_D))
+
+credit.train.imputed = credit.all %>% filter(SPLIT=='TRAIN')
+credit.val.imputed = credit.all %>% filter(SPLIT=='VALIDATION')
+credit.test.imputed = credit.all %>% filter(SPLIT=='TEST')
+
+credit.train.imputed$DEFAULT = credit.train$DEFAULT
+credit.train.imputed$PROFIT_LOSS = credit.train$PROFIT_LOSS
+
+credit.val.imputed$DEFAULT = credit.val$DEFAULT
+credit.val.imputed$PROFIT_LOSS = credit.val$PROFIT_LOSS
+# Use the imputer object to impute the missing values in the test set
+#credit <- mice::complete(x = imputer, data = as.matrix(credit.test))#, pred = TRUE)
+
+#val_imputed <- complete(imputer, subset(credit.val, select = -c(PROFIT_LOSS, PROFIT_IND, DEFAULT)))
+
+#apply(credit.all, 1, function(x) any(is.na(x)))
+#str(credit.all)
+View(credit.all)
+
+
+```
 #```{r}
-credit.train$ST_EMPL = as.factor(credit.train$ST_EMPL)
-credit.train$TYP_FIN = as.factor(credit.train$TYP_FIN)
-missForest(credit.train)
+#credit.train$ST_EMPL = as.factor(credit.train$ST_EMPL)
+#credit.train$TYP_FIN = as.factor(credit.train$TYP_FIN)
+#credit.all = missForest(subset(credit.all,select=-c(TYP_FIN)), ntree = 10, parallel = "multicore")$ximp
+
+# Set the seed for reproducibility
+set.seed(123)
+#mice.options(cores = 4)
+credit.all$SPLIT = factor(credit.all$SPLIT)
+#credit.all$ID = factor(credit.all$ID)
+#credit.all$TYPE_FIN = factor(credit.all$TYPE_FIN)
+credit.all$ST_EMPL = factor(credit.all$ST_EMPL)
+#credit.all = missForest(subset(credit.all,select=-c(ID,TYP_FIN)), ntree = 10)$ximp
+
+#credit.all = missForest(subset(credit.all,select=-c(ID,TYP_FIN)))$ximp
+
+# Run the mice function to impute the missing values in the train set
+#imputer <- mice(credit.all,  method = "cart", m = 3, maxit = 100, printFlag = TRUE, seed = 123, meth = "fast")
+#imputer <- mice(credit.all,  method = "cart", seed = 123, maxit = 1, maxiter = 5, m = 1,parallel='multicores')
+imputer <- mice(credit.all,  method = "pmm", seed = 123, maxit = 1, maxiter = 5, m = 1,parallel='multicores')
+
+
+#credit.all.imputed = complete(imputer,"long", include=TRUE)
+credit.all = complete(imputer,"long")
+
+
+credit.train.imputed = credit.all %>% filter(SPLIT=='TRAIN')
+credit.val.imputed = credit.all %>% filter(SPLIT=='VALIDATION')
+credit.test.imputed = credit.all %>% filter(SPLIT=='TEST')
+
+credit.train.imputed$DEFAULT = credit.train$DEFAULT
+credit.train.imputed$PROFIT_LOSS = credit.train$PROFIT_LOSS
+
+credit.val.imputed$DEFAULT = credit.val$DEFAULT
+credit.val.imputed$PROFIT_LOSS = credit.val$PROFIT_LOSS
+# Use the imputer object to impute the missing values in the test set
+#credit <- mice::complete(x = imputer, data = as.matrix(credit.test))#, pred = TRUE)
+
+#val_imputed <- complete(imputer, subset(credit.val, select = -c(PROFIT_LOSS, PROFIT_IND, DEFAULT)))
+
+#apply(credit.all, 1, function(x) any(is.na(x)))
+#str(credit.all)
+View(credit.all)
+imputer$loggedEvents
+imputer$data
 #```
 
 ```{r}
@@ -292,7 +419,7 @@ no.default.class <- credit.train[credit.train$DEFAULT == 0, ]
 n <- min(nrow(default.class), nrow(no.default.class)) # number of observations to select for each class
 #credit.train.balanced <- rbind(sample(default.class, n), sample(no.default.class, n))
 n
-sample_n(n,no.default.class,replace=FALSE)
+#sample_n(n,no.default.class,replace=FALSE)
 credit.train.balanced <- rbind(default.class[sample(nrow(default.class), n), ], no.default.class[sample(nrow(no.default.class), n*2), ])
 table(credit.train.balanced$DEFAULT)
 default.class
