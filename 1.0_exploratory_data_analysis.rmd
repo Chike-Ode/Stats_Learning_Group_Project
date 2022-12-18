@@ -1,0 +1,244 @@
+---
+title: "1.0_exploratory-analysis"
+author: "Chike Odenigbo"
+date: "2022-12-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+# install.packages('rstudioapi')
+# install.packages("imputeTS")
+# install.packages("naniar")
+# install.packages("MissMech")
+# install.packages('here')
+# install.packages("glmnet")
+# install.packages("splitstackshape")
+# install.packages("mice")
+library(mice)
+library(glmnet)
+library(here)
+library("rstudioapi")
+library(rstatix)
+library(dplyr)
+library(naniar)
+library(imputeTS)
+library(ggplot2)
+library(car)
+library(dplyr)
+library(tidyr)
+library(splitstackshape)
+library(caret)
+```
+
+## Import Data
+```{r}
+root_dir = dirname(here())
+data = read.csv("./data/raw/CreditGame_TRAIN.csv")
+row.names(data) = data$ID_TRAIN
+credit.test = read.csv("./data/raw/CreditGame_Applications.csv",row.names="ID_TEST")
+
+data = subset(data, select = -c(ID_TRAIN))
+data$TYP_RES <- as.factor(data$TYP_RES)
+data$ST_EMPL <- as.factor(data$ST_EMPL) #deal with nulls
+data$DEFAULT <- as.factor(data$DEFAULT)
+
+
+
+#attach(credit.train)
+data$ST_EMPL <- ifelse(data$ST_EMPL == "", "UNKNOWN", data$ST_EMPL)
+
+# data = subset(data, select = -c(ID_TRAIN))
+credit.test$TYP_RES <- as.factor(credit.test$TYP_RES)
+credit.test$ST_EMPL <- as.factor(credit.test$ST_EMPL) #deal with nulls
+#credit.test$DEFAULT <- as.factor(credit.test$DEFAULT)
+
+
+
+#attach(credit.train)
+credit.test$ST_EMPL <- ifelse(credit.test$ST_EMPL == "", "UNKNOWN", credit.test$ST_EMPL)
+```
+
+## Feature Engineering
+
+```{r}
+data$NB_MISSING_VALUES <- apply(data, 1, function(x) sum(is.na(x)))
+data$TAX = data$REV_BT - data$REV_NET
+data$TAX_RATE = data$TAX/data$REV_BT
+data$DEBT_ASSET_RATIO = data$MNT_PASS/data$MNT_ACT
+data$DEBT_SAVINGS_RATIO = data$MNT_PASS/data$MNT_EPAR
+data$CREDIT_UTILIZATION = data$MNT_UTIL_REN/data$MNT_AUT_REN
+data <- data %>% 
+    mutate_at(c('CREDIT_UTILIZATION'), ~replace_na(.,0))
+data$LOAN_PER_BORROWER = data$MNT_DEMANDE/data$NB_EMPT
+
+
+data <- data %>% 
+    mutate_at(c('DEBT_SAVINGS_RATIO'), ~replace_na(.,0))
+
+data <- data %>% 
+    mutate_at(c('SATI_TRANSACT_RATE'), ~replace_na(.,0))
+
+data$LTV_RATIO = data$MNT_DEMANDE/data$MNT_ACT
+data$SATI_TRANSACT_RATE = data$NB_SATI/data$NB_OPER
+data$NB_ER_6MS_12MS = data$NB_ER_12MS - data$NB_ER_6MS
+data$DELTA_NB_ER_6MS_12MS = data$NB_ER_6MS - data$NB_ER_6MS_12MS
+
+data$PROFIT_IND = ifelse(data$PROFIT_LOSS>=0, 1, 0)
+
+
+
+
+
+credit.test$NB_MISSING_VALUES <- apply(credit.test, 1, function(x) sum(is.na(x)))
+credit.test$TAX = credit.test$REV_BT - credit.test$REV_NET
+credit.test$TAX_RATE = credit.test$TAX/data$REV_BT
+credit.test$DEBT_ASSET_RATIO = credit.test$MNT_PASS/credit.test$MNT_ACT
+credit.test$DEBT_SAVINGS_RATIO = credit.test$MNT_PASS/credit.test$MNT_EPAR
+credit.test$CREDIT_UTILIZATION = credit.test$MNT_UTIL_REN/credit.test$MNT_AUT_REN
+credit.test <- credit.test %>% 
+    mutate_at(c('CREDIT_UTILIZATION'), ~replace_na(.,0))
+
+credit.test <- credit.test %>% 
+    mutate_at(c('DEBT_SAVINGS_RATIO'), ~replace_na(.,0))
+
+credit.test <- credit.test %>% 
+    mutate_at(c('SATI_TRANSACT_RATE'), ~replace_na(.,0))
+
+credit.test$LOAN_PER_BORROWER = credit.test$MNT_DEMANDE/credit.test$NB_EMPT
+
+credit.test$LTV_RATIO = credit.test$MNT_DEMANDE/data$MNT_ACT
+credit.test$SATI_TRANSACT_RATE = credit.test$NB_SATI/credit.test$NB_OPER
+credit.test$NB_ER_6MS_12MS = credit.test$NB_ER_12MS - credit.test$NB_ER_6MS
+credit.test$DELTA_NB_ER_6MS_12MS = credit.test$NB_ER_6MS - credit.test$NB_ER_6MS_12MS
+
+#data$PROFIT_IND = ifelse(data$PROFIT_LOSS>=0, 1, 0)
+#credit.train$NB_INTR_1_12M = credit.train$NB_INTR_1M - credit.train$NB_INTR_12M
+
+#credit.train$DELTA_NB_INTR_1_12M = credit.train$NB_INTR_1M - credit.train$credit.train$NB_INTR_1_12M
+#set.seed(42)  # good idea to set the random seed for reproducibility
+#stratified(credit.train, c('DEFAULT'), 0.5)
+
+#credit.train[order(credit.train$PROFIT_LOSS,decreasing = FALSE),]
+set.seed(123)
+train_index <- createDataPartition(data[,'DEFAULT'], p = 0.8, list = FALSE)
+credit.train <- data[train_index, ]
+credit.val <- data[-train_index, ]
+
+
+
+```
+
+```{r}
+colnames(credit.train)[!complete.cases(t(credit.train))]
+```
+DROP THE PROFIT LOSS when training due to data leakage
+```{r}
+credit.train %>%
+  group_by(PROFIT_IND) %>%
+  summarise(count = n_distinct(DEFAULT))
+
+sum(as.integer(credit.train$DEFAULT))
+mean(as.integer(credit.test$DEFAULT), na.rm = TRUE)
+mean(as.numeric(data$DEFAULT))
+```
+
+You can also embed plots, for example:
+
+```{r}
+FindOutliers <- function(data) {
+  lowerq = quantile(data)[2]
+  upperq = quantile(data)[4]
+  iqr = upperq - lowerq #Or use IQR(data)
+  # we identify extreme outliers
+  extreme.threshold.upper = (iqr * 3) + upperq
+  extreme.threshold.lower = lowerq - (iqr * 3)
+  result <- which(data > extreme.threshold.upper | data < extreme.threshold.lower)
+  length(result)
+}
+outlier.dist = data.frame(apply(na_mean(dplyr::select_if(credit.train, is.numeric)), 2, FindOutliers))
+outlier.dist.df <- cbind(features = rownames(outlier.dist), outlier.dist)
+rownames(outlier.dist.df) <- 1:nrow(outlier.dist.df)
+
+colnames(outlier.dist.df) = c('features','nb_outliers')
+outlier.dist.df[order(outlier.dist.df[,"nb_outliers"],decreasing = TRUE),]
+```
+
+## Calculate multicollinearity
+#```{r}
+model <- lm(DEFAULT ~ NB_ER_12MS + PRT_VAL + NB_ER_6MS + NB_DEC_12MS + NB_EMPT + NB_INTR_1M + NB_INTR_12M, data=credit.train)
+vif(model)
+vif(credit.train)#,'MNT_UTIL_REN')])
+cor(dplyr::select_if(credit.train, is.numeric))
+y = credit.train$DEFAULT
+X = subset(na_mean(dplyr::select_if(credit.train, is.numeric)))
+mod <- cv.glmnet(as.matrix(X),y ,family =   "binomial", alpha=1, nfolds=7)
+#```
+
+#```{r}
+as.matrix(coef(mod, mod$lambda.min))
+#```
+
+```{r}
+corr.pairs.all = cor(dplyr::select_if(na_mean(credit.train), is.numeric)) %>%
+  as.data.frame() %>%
+  mutate(var1 = rownames(.)) %>%
+  gather(var2, value, -var1) %>%
+  arrange(desc(value)) %>% 
+  mutate_at(vars(value), funs(round(., 1)))
+subset(corr.pairs.all, var1 != var2)
+
+#colnames(credit.train)
+
+```
+
+
+
+```{r}
+# Set the seed for reproducibility
+set.seed(123)
+
+# Run the mice function to impute the missing values in the train set
+imputer <- mice(subset(credit.train, select = -c(PROFIT_LOSS, PROFIT_IND, DEFAULT)), seed = 123,  method = "cart")
+
+# Use the imputer object to impute the missing values in the test set
+test_imputed <- complete(imputer, subset(credit.test, select = -c(PROFIT_LOSS, PROFIT_IND, DEFAULT)))
+
+```
+
+```{r}
+
+
+# Calculate the class ratio in the training set
+ratio <- sum(credit.train$DEFAULT == 1) / sum(credit.train$DEFAULT == 0)
+
+# If the ratio is not equal to the desired ratio, resample the training set
+if (ratio != desired_ratio) {
+  # Calculate the number of samples in each class in the training set
+  minority <- sum(credit.train$DEFAULT == 1)
+  majority <- sum(credit.train$DEFAULT == 0)
+  
+  # Calculate the desired number of minority samples
+  minority_desired <- minority / desired_ratio
+  
+  # Calculate the number of majority samples to keep
+  majority_keep <- minority_desired / majority
+  
+  # Subset the majority class to keep only the desired number of samples
+  train_majority <- credit.train[credit.train$DEFAULT == 0, ][sample(nrow(credit.train[credit.train$DEFAULT == 0, ]), size = majority_keep * majority), ]
+  
+  # Combine the minority class and the subsetted majority class to create the resampled training set
+  credit.train.balanced <- rbind(credit.train[credit.train$DEFAULT == 1, ], train_majority)
+}
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
