@@ -10,13 +10,25 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
+#install.packages("scales")
 #install.packages("mlbench")
+#install.packages("gridExtra")
+#install.packages("cowplot")
+#install.packages("rms")
+library(nnet)
+library(grDevices)
+library(cowplot)
+library(gridExtra)
+library(scales)
 library(e1071)
 library(recipes)
 library(caret)
 library(dplyr)
 library(mlbench)
 library(randomForest)
+library(ggplot2)
+library(rms)
+library(forcats)
 ```
 
 ## R Markdown
@@ -87,26 +99,49 @@ credit.test = subset(credit.test,select=-c(DEFAULT,PROFIT_LOSS))
 #credit.test$TYP_RES = factor(credit.test$TYP_RES)
 str(credit.train.balanced)
 ```
+#Convert Dummy to factor for RF and SVM
+```{r}
+names(dummy)
+col.dummy.list = list()
+col.dummy.char = ((credit.train.balanced %>%
+  select(matches("\\.")) %>%
+  names()))
+for (col in col.dummy.char) {
+  col.dummy.list <- c(col.dummy.list, col)
+}
+#credit.train.balanced[, col.dummy.list] <- lapply(credit.train.balanced[, col.dummy.list], as.factor)
 
+credit.train.balanced <- credit.train.balanced %>%
+  mutate_at(vars(col.dummy.char), as.factor)
+
+credit.val <- credit.val %>%
+  mutate_at(vars(col.dummy.char), as.factor)
+
+credit.test <- credit.test %>%
+  mutate_at(vars(col.dummy.char), as.factor)
+
+str(credit.train.balanced)
+```
 
 Random forest with balanced training set
 ```{r}
 subset(credit.train.balanced, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO))
 
 set.seed(1234)
-model.rf.bal=randomForest(DEFAULT~.,data=subset(credit.train.balanced, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)),ntree=500)
-pred.proba.rf.bal <- predict(model.nb, newdata = subset(credit.val, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "raw")
+model.rf.bal=randomForest(DEFAULT~.,data=subset(credit.train.balanced, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)),ntree=300)
+
+pred.proba.rf.bal <- predict(model.rf.bal, newdata = subset(credit.val, select = -c(DEFAULT,PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "prob")
 
 
 credit.val = cbind(credit.val, pred.proba.rf.bal)
-
 credit.val = credit.val %>% 
   rename(
     PRED_PROBA_RF_0 = "0",
     PRED_PROBA_RF_1 = "1"
     )
 
-pred.class.rf.bal <- predict(model.nb, newdata = subset(credit.val, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "class")
+
+pred.class.rf.bal <- predict(model.rf.bal, newdata = subset(credit.val, select = -c(DEFAULT,PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "class")
 
 credit.val = cbind(credit.val, pred.class.rf.bal)
 credit.val
@@ -114,6 +149,25 @@ credit.val = credit.val %>%
   rename(
     PRED_CLASS_RF = "pred.class.rf.bal"
     )
+###########################      TEST DATA
+pred.proba.rf.bal.test <- predict(model.rf.bal, newdata = subset(credit.test, select = -c(DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "prob")
+
+credit.test = cbind(credit.test, pred.proba.rf.bal.test)
+credit.test = credit.test %>% 
+  rename(
+    PRED_PROBA_RF_0 = "0",
+    PRED_PROBA_RF_1 = "1"
+    )
+
+pred.class.rf.bal.test <- predict(model.rf.bal, newdata = subset(credit.test, select = -c(DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "class")
+
+credit.test = cbind(credit.test, pred.class.rf.bal.test)
+
+credit.test = credit.test %>% 
+  rename(
+    PRED_CLASS_RF = "pred.class.rf.bal.test"
+    )
+
 
 model.rf.var.imp=varImp(model.rf.bal, conditional=TRUE)
 #top_n(model.rf.var.imp[order(-model.rf.var.imp$Overall),]
@@ -121,13 +175,14 @@ model.rf.var.imp=varImp(model.rf.bal, conditional=TRUE)
 model.rf.var.imp <- model.rf.var.imp %>% 
   mutate(Feature = row.names(model.rf.var.imp))
 
+write.csv(model.rf.var.imp, "data/analysis/feat_imp.csv")
+
 model.rf.var.imp.final = model.rf.var.imp %>% 
   arrange(desc(Overall)) %>% 
-  slice(1:15)
+  slice(1:10)
 model.rf.var.imp.final$Feature
 #model.nb$tables
 #model.nb$apriori
-credit.val$
 confusionMatrix(pred.rf.bal,credit.val$DEFAULT)
 
 saveRDS(model.rf, file = "models/random_forest.rds")
@@ -137,6 +192,129 @@ saveRDS(model.rf, file = "models/random_forest.rds")
 min(credit.val$rf_pred_1)
 
 ```
+```{r}
+navyblue <- rgb(0, 0, 128, maxColorValue = 255)
+navyblue_transparent <- alpha(navyblue, alpha = 0.5)
+p=ggplot(data = model.rf.var.imp.final,aes(y = fct_reorder(Feature, Overall), x = Overall)) +
+  geom_col(fill = navyblue_transparent)+
+  ggtitle("Top 10 Features from Random Forest") +
+  xlab("Gain") +
+  ylab("Features") + 
+  scale_x_continuous(labels = scales::comma) +
+  theme(plot.title = element_text(size = 15, face = "bold"))+
+  theme(axis.title.x = element_text(size = 11,face="bold"))+
+  theme(axis.title.y = element_text(size = 11,face="bold"))+
+  theme(strip.text.x = element_text(size = 11, face="bold", colour = "black" ))+
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=0.3))+
+  theme(panel.background = element_rect(fill = "white"),
+        plot.background = element_rect(fill = "white"))+
+  theme(axis.text = element_text(size = 10, face = "bold"))+
+  theme(panel.grid = element_line(color = "grey", size = 0.4, linetype = "dashed"))
+ggsave(p, filename = "reports/figures/2.0_RF_Top_Features.png")
+```
+
+#```{r}
+navyblue <- rgb(0, 0, 128, maxColorValue = 255)
+navyblue_transparent <- alpha(navyblue, alpha = 0.5)
+p = ggplot(data = model.rf.var.imp.final, aes(x = Overall, y=Feature)) +
+  geom_bar(fill = navyblue_transparent)+
+  scale_y_continuous(labels = percent)+
+  ggtitle("Variable Importance from Random Forest") +
+  xlab("Gain") +
+  ylab("Features") + 
+  theme(plot.title = element_text(size = 15, face = "bold"))+
+  theme(axis.title.x = element_text(size = 11,face="bold"))+
+  theme(axis.title.y = element_text(size = 11,face="bold"))+
+  theme(strip.text.x = element_text(size = 11, face="bold", colour = "black" ))+
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=0.3))+
+  theme(panel.background = element_rect(fill = "white"),
+        plot.background = element_rect(fill = "white"))+
+  theme(axis.text = element_text(size = 10, face = "bold"))+
+  theme(panel.grid = element_line(color = "grey", size = 0.4, linetype = "dashed"))
+ggsave(p, filename = "reports/figures/2.0_RF_Top_Features.png")
+#```
+```{r}
+model.svm <- svm(DEFAULT~. , data = subset(credit.train.balanced, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), kernel = "radial", probability=TRUE)
+
+pred.class.svm <- predict(model.svm, newdata = subset(credit.val, select = -c(DEFAULT,PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO,PRED_PROBA_RF_0,PRED_PROBA_RF_1,PRED_CLASS_RF)), type = "class")
+
+pred.prob.svm <- predict(model.svm, newdata = subset(credit.val, select = -c(DEFAULT,PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO,PRED_PROBA_RF_0,PRED_PROBA_RF_1,PRED_CLASS_RF)), type = "prob")
+
+
+credit.val = cbind(credit.val, pred.prob.svm)
+credit.val
+credit.val = credit.val %>% 
+  rename(
+    PRED_PROBA_SVM_0 = "0",
+    PRED_PROBA_SVM_1 = "1"
+    )
+
+
+credit.val = cbind(credit.val, pred.class.svm)
+credit.val
+credit.val = credit.val %>% 
+  rename(
+    PRED_CLASS_SVM = "pred.class.svm"
+    )
+
+
+################################ TEST
+
+pred.class.svm.test <- predict(model.svm, newdata = subset(credit.test, select = -c(DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO,PRED_PROBA_RF_0,PRED_PROBA_RF_1,PRED_CLASS_RF)), type = "class")
+
+pred.prob.svm.test <- predict(model.svm, newdata = subset(credit.test, select = -c(DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO,PRED_PROBA_RF_0,PRED_PROBA_RF_1,PRED_CLASS_RF)), type = "prob")
+
+
+credit.test = cbind(credit.test, pred.prob.svm.test)
+
+credit.test = credit.test %>% 
+  rename(
+    PRED_PROBA_SVM_0 = "0",
+    PRED_PROBA_SVM_1 = "1"
+    )
+
+
+credit.test = cbind(credit.test, pred.class.svm.test)
+credit.test = credit.test %>% 
+  rename(
+    PRED_CLASS_SVM = "pred.class.svm.test"
+    )
+
+
+
+
+# Save the model as a binary file
+saveRDS(model.svm, file = "models/svm.rds")
+
+# Load the model from a binary file
+#model <- readRDS("model.rds")
+```
+
+##Numeric for Naive Bayes since cant take factors
+```{r}
+names(dummy)
+col.dummy.list = list()
+col.dummy.char = ((credit.train.balanced %>%
+  select(matches("\\.")) %>%
+  names()))
+for (col in col.dummy.char) {
+  col.dummy.list <- c(col.dummy.list, col)
+}
+#credit.train.balanced[, col.dummy.list] <- lapply(credit.train.balanced[, col.dummy.list], as.factor)
+
+credit.train.balanced <- credit.train.balanced %>%
+  mutate_at(vars(col.dummy.char), as.numeric)
+
+credit.val <- credit.val %>%
+  mutate_at(vars(col.dummy.char), as.numeric)
+
+credit.test <- credit.test %>%
+  mutate_at(vars(col.dummy.char), as.numeric)
+
+
+str(credit.train.balanced)
+```
+
 
 ```{r}
 credit.train.balanced$DEFAULT = factor(credit.train.balanced$DEFAULT)
@@ -144,8 +322,8 @@ credit.train.balanced$DEFAULT = factor(credit.train.balanced$DEFAULT)
 subset(correlation.pairs.df, var1 != var2)
 
 model.nb <- naiveBayes(DEFAULT~. , data = subset(credit.train.balanced, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)))#, laplace = 10)
-pred.class.nb <- predict(model.nb, newdata = subset(credit.val, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "class")
-pred.prob.nb <- predict(model.nb, newdata = subset(credit.val, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "raw")
+pred.class.nb <- predict(model.nb, newdata = subset(credit.val, select = -c(DEFAULT,PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO,PRED_PROBA_RF_0,PRED_PROBA_RF_1,PRED_CLASS_RF,PRED_PROBA_SVM_0,PRED_PROBA_SVM_1,PRED_CLASS_SVM)), type = "class")
+pred.prob.nb <- predict(model.nb, newdata = subset(credit.val, select = -c(DEFAULT,PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO,PRED_PROBA_RF_0,PRED_PROBA_RF_1,PRED_CLASS_RF,PRED_PROBA_SVM_0,PRED_PROBA_SVM_1,PRED_CLASS_SVM)), type = "prob")
 
 
 credit.val = cbind(credit.val, pred.prob.nb)
@@ -164,8 +342,31 @@ credit.val = credit.val %>%
     PRED_CLASS_NB = "pred.class.nb"
     )
 
+####################### TEST
 
-saveRDS(model.nb, file = "naive_bayes.rds")
+pred.class.nb.test <- predict(model.nb, newdata = subset(credit.test, select = -c(DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO,PRED_PROBA_RF_0,PRED_PROBA_RF_1,PRED_CLASS_RF,PRED_PROBA_SVM_0,PRED_PROBA_SVM_1,PRED_CLASS_SVM)), type = "class")
+
+pred.prob.nb.test <- predict(model.nb, newdata = subset(credit.test, select = -c(DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO,PRED_PROBA_RF_0,PRED_PROBA_RF_1,PRED_CLASS_RF,PRED_PROBA_SVM_0,PRED_PROBA_SVM_1,PRED_CLASS_SVM)), type = "prob")
+
+
+credit.test = cbind(credit.test, pred.prob.nb.test)
+
+credit.test = credit.test %>% 
+  rename(
+    PRED_PROBA_NB_0 = "0",
+    PRED_PROBA_NB_1 = "1"
+    )
+
+
+credit.test = cbind(credit.test, pred.class.nb.test)
+credit.test
+credit.test = credit.test %>% 
+  rename(
+    PRED_CLASS_NB = "pred.class.nb.test"
+    )
+
+
+saveRDS(model.nb, file = "models/naive_bayes.rds")
 
 # Load the model from a binary file
 #model <- readRDS("model.rds")
@@ -176,55 +377,63 @@ confusionMatrix(pred.nb,credit.val$DEFAULT)
 ```
 
 
+## Artificial Neural Network
 ```{r}
-model.svm <- svm(DEFAULT~. , data = subset(credit.train.balanced, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), kernel = "radial")
-pred.class.svm <- predict(model.svm, newdata = subset(credit.val, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "class")
-
-pred.prob.svm <- predict(model.svm, newdata = subset(credit.val, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "raw")
-
-
-credit.val = cbind(credit.val, pred.prob.nb)
-credit.val
-credit.val = credit.val %>% 
-  rename(
-    PRED_PROBA_SVM_0 = "0",
-    PRED_PROBA_SVM_1 = "1"
-    )
-
-
-credit.val = cbind(credit.val, pred.class.nb)
-credit.val
-credit.val = credit.val %>% 
-  rename(
-    PRED_CLASS_NB = "pred.class.nb"
-    )
-
-
-
-pred.nb
-model.nb$tables
-model.nb$apriori
-confusionMatrix(pred.nb,credit.val$DEFAULT)
-
-# Save the model as a binary file
-saveRDS(model.svm, file = "svm.rds")
-
-# Load the model from a binary file
-#model <- readRDS("model.rds")
+summary(subset(credit.train.unbalanced, select=c(MNT_DEMANDE,PROFIT_LOSS))) 
 ```
 
 ```{r}
-subset(credit.train.unbalanced, select=c(MNT_DEMANDE,PROFIT_LOSS)) 
+navyblue <- rgb(0, 0, 128, maxColorValue = 255)
+navyblue_transparent <- alpha(navyblue, alpha = 0.5)
+p = ggplot(data = credit.train.balanced, aes(x = PROFIT_LOSS)) +
+  geom_density(fill = navyblue_transparent)+
+  scale_y_continuous(labels = percent)+
+  ggtitle("Probability Density of the Profit Observed") +
+  xlab("Profit") +
+  ylab("Density") + 
+  scale_x_continuous(labels = scales::dollar_format(scale = .001, suffix = "K"))+
+  theme(plot.title = element_text(size = 15, face = "bold"))+
+  theme(axis.title.x = element_text(size = 11,face="bold"))+
+  theme(axis.title.y = element_text(size = 11,face="bold"))+
+  theme(strip.text.x = element_text(size = 11, face="bold", colour = "black" ))+
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=0.3))+
+  theme(panel.background = element_rect(fill = "white"),
+        plot.background = element_rect(fill = "white"))+
+  theme(axis.text = element_text(size = 10, face = "bold"))+
+  theme(panel.grid = element_line(color = "grey", size = 0.4, linetype = "dashed"))
+ggsave(p, filename = "reports/figures/2.0_Profit_Loss_Density_Plot.png")
 ```
 
+## Defaults in half and profits in half to bin people
+```{r}
+profit = credit.train.balanced %>%
+  filter(PROFIT_LOSS >= 0) %>%
+  select(PROFIT_LOSS) 
 
-#```{r}
+loss = credit.train.balanced %>%
+  filter(PROFIT_LOSS < 0) %>%
+  select(PROFIT_LOSS)
+
+median(loss$PROFIT_LOSS)
+median(profit$PROFIT_LOSS)
+```
+
+```{r}
+credit.train.balanced$PROFIT_LOSS_CATEGORY <- cut(credit.train.balanced$PROFIT_LOSS, breaks = c(-Inf, median(loss$PROFIT_LOSS), 0, median(profit$PROFIT_LOSS), Inf), labels = c(0, 1, 2, 3))
+credit.train.balanced$PROFIT_LOSS_CATEGORY = as.numeric(credit.train.balanced$PROFIT_LOSS_CATEGORY)
+
+credit.val$PROFIT_LOSS_CATEGORY <- cut(credit.val$PROFIT_LOSS, breaks = c(-Inf, median(loss$PROFIT_LOSS), 0, median(profit$PROFIT_LOSS), Inf), labels = c(0, 0.33, 0.66, 1))
+credit.val$PROFIT_LOSS_CATEGORY = as.numeric(credit.val$PROFIT_LOSS_CATEGORY)
+credit.train.balanced %>% filter(PROFIT_LOSS_CATEGORY == 3)
+```
+## Numeric for NN
+```{r}
 names(dummy)
 col.dummy.list = list()
 col.dummy.char = ((credit.train.balanced %>%
   select(matches("\\.")) %>%
   names()))
-for (col in col.char) {
+for (col in col.dummy.char) {
   col.dummy.list <- c(col.dummy.list, col)
 }
 #credit.train.balanced[, col.dummy.list] <- lapply(credit.train.balanced[, col.dummy.list], as.factor)
@@ -232,121 +441,79 @@ for (col in col.char) {
 credit.train.balanced <- credit.train.balanced %>%
   mutate_at(vars(col.dummy.char), as.numeric)
 
-str(credit.train.balanced)
-#```
+credit.val <- credit.val %>%
+  mutate_at(vars(col.dummy.char), as.numeric)
 
+credit.test <- credit.test %>%
+  mutate_at(vars(col.dummy.char), as.numeric)
 
-
-```{r}
-#View(credit.train.balanced[rowSums(is.na(credit.train.balanced)) > 0,])
-
-any(apply(credit.train.balanced, 2, is.na))  # returns TRUE if any element is NA
-
-# Check for NaN values
-any(apply(credit.train.balanced, 2, is.nan))  # returns TRUE if any element is NaN
-
-# Check for Inf values
-any(apply(credit.train.balanced, 2, is.infinite))
-```
-
-## NAIVE BAYES
-
-
-```{r}
-#nbModel <- naiveBayes(x = subset(credit.train.balanced, select = -c(PROFIT_IND,SPLIT,ID,DEFAULT)), y = credit.train.balanced$DEFAULT)
 str(credit.train.balanced)
 ```
 ```{r}
-#nbModel <- naiveBayes(x = subset(credit.train.balanced, select = -c(PROFIT_IND,SPLIT,ID,DEFAULT)), y = credit.train.balanced$DEFAULT)
-nbModel <- naiveBayes(DEFAULT~. , data = scale(subset(credit.train.balanced, select = -c(PROFIT_LOSS))), laplace = 1)
-predictions <- predict(nbModel, newdata = scale(subset(credit.val, select = -c(PROFIT_LOSS))), type = "raw")
-predictions
-length(predictions)
-print(predictions)
-confusionMatrix(predictions,credit.val$DEFAULT)
-```
-```{r}
+Train_mask <- credit.train.balanced %>% select_if(is.numeric) 
+Train_means <- data.frame(as.list(Train_mask %>% apply(2, mean)))
+Train_stddevs <- data.frame(as.list(Train_mask %>% apply(2, sd)))
 
-```
+credit.train.balanced.scaled = credit.train.balanced #data.frame(matrix(nrow = nrow(credit.train.balanced), ncol = 0))
+credit.val.scaled = credit.val #data.frame(matrix(nrow = nrow(credit.val), ncol = 0))
+credit.test.scaled = credit.test
 
-You can also embed plots, for example:
+col_names <- names(Train_mask)
+for (i in 1:ncol(Train_mask)){
+  credit.train.balanced.scaled[,col_names[i]] <- (credit.train.balanced[,col_names[i]] - Train_means[,col_names[i]])/Train_stddevs[,col_names[i]]
+  credit.val.scaled[,col_names[i]] <-  (credit.val.scaled[,col_names[i]] - Train_means[,col_names[i]])/Train_stddevs[,col_names[i]]
+  credit.test.scaled[,col_names[i]] <-  (credit.test.scaled[,col_names[i]] - Train_means[,col_names[i]])/Train_stddevs[,col_names[i]]
+}
+credit.val.scaled$DEFAULT = credit.val$DEFAULT
+credit.train.balanced.scaled$DEFAULT = credit.train.balanced$DEFAULT
 
-```{r pressure, echo=FALSE}
-# Split the data into a training set and a test set
-set.seed(123)
-
-# Define the hyperparameter grid
-#paramGrid <- expand.grid(fL=c(0,0.5,1.0), usekernel = c(FALSE), adjust=c(0,0.5,1.0))
-paramGrid <- expand.grid(usekernel = c(TRUE, FALSE),fL=c(0,0.5,1.0),adjust=c(0,0.5,1.0))
-
-# Use the train() function to perform the grid search
-model <- train(DEFAULT~. , data = subset(credit.train.balanced, select = -c(PROFIT_LOSS)), method = "nb", metric ='Accuracy', tuneGrid = paramGrid, trControl = trainControl(method = "cv", number = 2), preProcess = c("center", "scale"), distribution = "gaussian")
-
-y# Print the results of the grid search
-print(model)
-
-```
-
-
-
-
-
-
-
-
-
-
-
-
-```{r}
-#nbModel <- naiveBayes(x = subset(credit.train.balanced, select = -c(PROFIT_IND,SPLIT,ID,DEFAULT)), y = credit.train.balanced$DEFAULT)
-#model.svm <- svm(DEFAULT~CREDIT_UTILIZATION + LOAN_PER_BORROWER , data = subset(credit.train.balanced, select = -c(PROFIT_LOSS,TYP_RES,ST_EMPL)), kernel = "radial")
-#predictions <- predict(model.svm, newdata = subset(credit.val, select = c(CREDIT_UTILIZATION, LOAN_PER_BORROWER)), type = "class")
-
-model.svm <- svm(DEFAULT~CREDIT_UTILIZATION + LOAN_PER_BORROWER , data = subset(credit.train.balanced, select = -c(PROFIT_LOSS,TYP_RES,ST_EMPL)), kernel = "radial")
-predictions <- predict(model.svm, newdata = subset(credit.val, select = c(CREDIT_UTILIZATION, LOAN_PER_BORROWER)), type = "class")
-
-
-predictions
-length(predictions)
-print(predictions)
-confusionMatrix(predictions,credit.val$DEFAULT)
-```
-
-```{r}
-ctrl <- trainControl(method="repeatedcv",   # 10fold cross validation
-                     repeats=5,         # do 5 repetitions of cv
-                     summaryFunction=twoClassSummary,   # Use AUC to pick the best model
-                     classProbs=TRUE)
-
-svm.tune <- train(DEFAULT~. ,
-                  data = subset(credit.train.balanced, select = -c(PROFIT_LOSS)),
-                  method = "svmRadial",   # Radial kernel
-                  tuneLength = 5,                   # 5 values of the cost function
-                  preProc = c("center","scale"),  # Center and scale data
-                  metric="ROC",
-                  trControl=ctrl)
+credit.val.scaled$PROFIT_LOSS_CATEGORY = credit.val$PROFIT_LOSS_CATEGORY
+credit.train.balanced.scaled$PROFIT_LOSS_CATEGORY = credit.train.balanced$PROFIT_LOSS_CATEGORY
+credit.train.balanced.scaled
 ```
 
 
 ```{r}
-# Split the data into a training set and a test set
-set.seed(123)
+str(credit.train.balanced)
 
-# Define the hyperparameter grid
-#paramGrid <- expand.grid(fL=c(0,0.5,1.0), usekernel = c(FALSE), adjust=c(0,0.5,1.0))
-paramGrid <- expand.grid(C = c(0.01, 0.1, 1, 10))
+# Fit the model
+model.ann = nnet(PROFIT_LOSS_CATEGORY ~ ., data = subset(credit.train.balanced.scaled, select = -c(PROFIT_LOSS,DEFAULT,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), linout = TRUE, size = 10, lr = 0.001,maxit=100)
 
-# Use the train() function to perform the grid search
-model <- train(DEFAULT~. , data = subset(credit.train.balanced, select = -c(PROFIT_LOSS)), method = "svmLinear", metric ='Accuracy', tuneGrid = paramGrid, trControl = trainControl(method = "cv", number = 1), preProcess = c("center", "scale"), distribution = "gaussian")
 
-y# Print the results of the grid search
-print(model)
-predictions <- predict(model, credit.val)
+# Print a summary of the model
+summary(model.ann)
+
+pred.class.nb = predict(model.ann, subset(credit.val.scaled, select = -c(PROFIT_LOSS,DEFAULT,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO,PRED_PROBA_RF_0,PRED_PROBA_RF_1,PRED_CLASS_RF,PRED_PROBA_SVM_0,PRED_PROBA_SVM_1,PRED_CLASS_SVM,PRED_PROBA_NB_0,PRED_PROBA_NB_1,PRED_CLASS_NB)))
+
+credit.val = cbind(credit.val, pred.class.nb)
+credit.val
+credit.val = credit.val %>% 
+  rename(
+    PRED_CLASS_ANN = "pred.class.ann"
+    )
+
+
+pred.class.nb.test = predict(model.ann, subset(credit.test.scaled, select = -c(DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO,PRED_PROBA_RF_0,PRED_PROBA_RF_1,PRED_CLASS_RF,PRED_PROBA_SVM_0,PRED_PROBA_SVM_1,PRED_CLASS_SVM,PRED_PROBA_NB_0,PRED_PROBA_NB_1,PRED_CLASS_NB)))
+
+credit.test = cbind(credit.test, pred.class.nb.test)
+credit.test
+credit.test = credit.test %>% 
+  rename(
+    PRED_CLASS_ANN = "pred.class.ann.test"
+    )
+saveRDS(model.ann, file = "models/neural_network.rds")
 ```
 
+```{r}
+write.csv(credit.test, "data/predictions/full_prediction_test.csv")
+write.csv(credit.val, "data/predictions/full_prediction_validation.csv")
+write.csv(credit.train.balanced, "data/predictions/training_documentation.csv")
 
+write.csv(credit.train.balanced.scaled, "data/scaled/train_balanced.csv")
+write.csv(credit.val.scaled, "data/scaled/validation.csv")
+write.csv(credit.test.scaled, "data/scaled/test.csv")
 
+```
 
 
 
