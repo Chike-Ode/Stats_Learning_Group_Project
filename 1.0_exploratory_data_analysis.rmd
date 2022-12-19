@@ -342,12 +342,18 @@ predict(imputer, newdata = na_mean(credit.test))
 #```
 
 ```{r}
-credit.all <- credit.all %>%
-  mutate(AGE_D_IMPUTED_RAND_SAMPLE = ifelse(is.na(AGE_D), sample(credit.all$AGE_D, 1), AGE_D))
+
 
 credit.train.imputed = credit.all %>% filter(SPLIT=='TRAIN')
 credit.val.imputed = credit.all %>% filter(SPLIT=='VALIDATION')
 credit.test.imputed = credit.all %>% filter(SPLIT=='TEST')
+
+credit.train.imputed <- credit.train.imputed %>%
+  mutate(AGE_D_IMPUTED_RAND_SAMPLE = ifelse(is.na(AGE_D), sample(credit.train.imputed$AGE_D, 1), AGE_D))
+credit.val.imputed <- credit.val.imputed %>%
+  mutate(AGE_D_IMPUTED_RAND_SAMPLE = ifelse(is.na(AGE_D), sample(credit.train.imputed$AGE_D, 1), AGE_D))
+credit.test.imputed <- credit.test.imputed %>%
+  mutate(AGE_D_IMPUTED_RAND_SAMPLE = ifelse(is.na(AGE_D), sample(credit.train.imputed$AGE_D, 1), AGE_D))
 
 credit.train.imputed$DEFAULT = credit.train$DEFAULT
 credit.train.imputed$PROFIT_LOSS = credit.train$PROFIT_LOSS
@@ -435,6 +441,7 @@ write.csv(credit.train.balanced, "data/processed/train_balanced.csv")
 write.csv(credit.train.imputed, "data/processed/train_unbalanced.csv")
 write.csv(credit.val.imputed, "data/processed/validation.csv")
 write.csv(credit.test.imputed, "data/processed/test.csv")
+write.csv(corr.pairs.all, "data/analysis/correlation.csv")
 ```
 
 

@@ -1,0 +1,337 @@
+---
+title: "2.0_Naive_Bayes"
+author: "Chike Odenigbo"
+date: "2022-12-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#install.packages("mlbench")
+library(e1071)
+library(recipes)
+library(caret)
+library(dplyr)
+library(mlbench)
+library(randomForest)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+credit.train.balanced = read.csv("./data/processed/train_balanced.csv",row.names=1)
+credit.train.unbalanced = read.csv("./data/processed/train_unbalanced.csv",row.names=1)
+credit.val = read.csv("./data/processed/validation.csv",row.names=1)
+credit.test = read.csv("./data/processed/test.csv",row.names=1)
+correlation.pairs.df = read.csv("data/analysis/correlation.csv")
+```
+
+```{r}
+table(credit.test$TYP_FIN)
+table(credit.val$TYP_FIN)
+table(credit.train.unbalanced$TYP_FIN)
+
+credit.train.unbalanced = subset(credit.train.unbalanced, select = -c(TYP_FIN,SPLIT,ID,AGE_D))
+credit.train.balanced = subset(credit.train.balanced, select = -c(TYP_FIN,SPLIT,ID,AGE_D))
+credit.val = subset(credit.val, select = -c(TYP_FIN,SPLIT,ID,AGE_D))
+credit.test = subset(credit.test, select = -c(TYP_FIN,SPLIT,ID,AGE_D))
+```
+
+
+
+```{r}
+str(credit.train.balanced)
+credit.train.balanced$TYP_RES = factor(credit.train.balanced$TYP_RES)
+credit.train.balanced$ST_EMPL = factor(credit.train.balanced$ST_EMPL)
+
+dummy <- dummyVars(~ ., data=credit.train.balanced)
+
+#perform one-hot encoding on data frame
+credit.train.balanced = data.frame(predict(dummy, newdata=credit.train.balanced))
+credit.train.balanced$DEFAULT = factor(credit.train.balanced$DEFAULT)
+
+#levels(credit.train.balanced$DEFAULT) <- c("No", "Yes")
+#credit.train.balanced$TYP_RES = factor(credit.train.balanced$TYP_RES)
+
+credit.train.unbalanced$TYP_RES = factor(credit.train.unbalanced$TYP_RES)
+credit.train.unbalanced$ST_EMPL = factor(credit.train.unbalanced$ST_EMPL)
+
+credit.train.unbalanced = data.frame(predict(dummy, newdata=credit.train.unbalanced))
+credit.train.unbalanced$DEFAULT = factor(credit.train.unbalanced$DEFAULT)
+#levels(credit.train.unbalanced$DEFAULT) <- c("No", "Yes")
+
+#credit.train.unbalanced$TYP_RES = factor(credit.train.unbalanced$TYP_RES)
+
+credit.val$TYP_RES = factor(credit.val$TYP_RES)
+credit.val$ST_EMPL = factor(credit.val$ST_EMPL)
+credit.val = data.frame(predict(dummy, newdata=credit.val))
+credit.val$DEFAULT = factor(credit.val$DEFAULT)
+#levels(credit.val$DEFAULT) <- c("No", "Yes")
+
+#credit.val$TYP_RES = factor(credit.val$TYP_RES)
+
+credit.test$TYP_RES = factor(credit.test$TYP_RES)
+credit.test$ST_EMPL = factor(credit.test$ST_EMPL)
+credit.test$DEFAULT = 1 #adding to not have dummify error
+credit.test$PROFIT_LOSS = 1 
+credit.test = data.frame(predict(dummy, newdata=credit.test))
+credit.test = subset(credit.test,select=-c(DEFAULT,PROFIT_LOSS))
+#credit.test$DEFAULT = factor(credit.test$DEFAULT)
+#credit.test$TYP_RES = factor(credit.test$TYP_RES)
+str(credit.train.balanced)
+```
+
+
+Random forest with balanced training set
+```{r}
+subset(credit.train.balanced, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO))
+
+set.seed(1234)
+model.rf.bal=randomForest(DEFAULT~.,data=subset(credit.train.balanced, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)),ntree=500)
+pred.proba.rf.bal <- predict(model.nb, newdata = subset(credit.val, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "raw")
+
+
+credit.val = cbind(credit.val, pred.proba.rf.bal)
+
+credit.val = credit.val %>% 
+  rename(
+    PRED_PROBA_RF_0 = "0",
+    PRED_PROBA_RF_1 = "1"
+    )
+
+pred.class.rf.bal <- predict(model.nb, newdata = subset(credit.val, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "class")
+
+credit.val = cbind(credit.val, pred.class.rf.bal)
+credit.val
+credit.val = credit.val %>% 
+  rename(
+    PRED_CLASS_RF = "pred.class.rf.bal"
+    )
+
+model.rf.var.imp=varImp(model.rf.bal, conditional=TRUE)
+#top_n(model.rf.var.imp[order(-model.rf.var.imp$Overall),]
+
+model.rf.var.imp <- model.rf.var.imp %>% 
+  mutate(Feature = row.names(model.rf.var.imp))
+
+model.rf.var.imp.final = model.rf.var.imp %>% 
+  arrange(desc(Overall)) %>% 
+  slice(1:15)
+model.rf.var.imp.final$Feature
+#model.nb$tables
+#model.nb$apriori
+credit.val$
+confusionMatrix(pred.rf.bal,credit.val$DEFAULT)
+
+min(credit.val$rf_pred_1)
+
+```
+
+```{r}
+credit.train.balanced$DEFAULT = factor(credit.train.balanced$DEFAULT)
+#str(credit.train.balanced)
+subset(correlation.pairs.df, var1 != var2)
+
+model.nb <- naiveBayes(DEFAULT~. , data = subset(credit.train.balanced, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)))#, laplace = 10)
+pred.class.nb <- predict(model.nb, newdata = subset(credit.val, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "class")
+pred.prob.nb <- predict(model.nb, newdata = subset(credit.val, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "raw")
+
+
+credit.val = cbind(credit.val, pred.prob.nb)
+credit.val
+credit.val = credit.val %>% 
+  rename(
+    PRED_PROBA_NB_0 = "0",
+    PRED_PROBA_NB_1 = "1"
+    )
+
+
+credit.val = cbind(credit.val, pred.class.nb)
+credit.val
+credit.val = credit.val %>% 
+  rename(
+    PRED_CLASS_NB = "pred.class.nb"
+    )
+
+
+
+pred.nb
+model.nb$tables
+model.nb$apriori
+confusionMatrix(pred.nb,credit.val$DEFAULT)
+```
+
+
+```{r}
+model.svm <- svm(DEFAULT~. , data = subset(credit.train.balanced, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), kernel = "radial")
+pred.class.svm <- predict(model.svm, newdata = subset(credit.val, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "class")
+
+pred.prob.svm <- predict(model.svm, newdata = subset(credit.val, select = -c(PROFIT_LOSS,DEBT_ASSET_RATIO,DEBT_SAVINGS_RATIO,LTV_RATIO)), type = "raw")
+
+
+credit.val = cbind(credit.val, pred.prob.nb)
+credit.val
+credit.val = credit.val %>% 
+  rename(
+    PRED_PROBA_SVM_0 = "0",
+    PRED_PROBA_SVM_1 = "1"
+    )
+
+
+credit.val = cbind(credit.val, pred.class.nb)
+credit.val
+credit.val = credit.val %>% 
+  rename(
+    PRED_CLASS_NB = "pred.class.nb"
+    )
+
+
+
+pred.nb
+model.nb$tables
+model.nb$apriori
+confusionMatrix(pred.nb,credit.val$DEFAULT)
+```
+
+
+
+#```{r}
+names(dummy)
+col.dummy.list = list()
+col.dummy.char = ((credit.train.balanced %>%
+  select(matches("\\.")) %>%
+  names()))
+for (col in col.char) {
+  col.dummy.list <- c(col.dummy.list, col)
+}
+#credit.train.balanced[, col.dummy.list] <- lapply(credit.train.balanced[, col.dummy.list], as.factor)
+
+credit.train.balanced <- credit.train.balanced %>%
+  mutate_at(vars(col.dummy.char), as.numeric)
+
+str(credit.train.balanced)
+#```
+
+
+
+```{r}
+#View(credit.train.balanced[rowSums(is.na(credit.train.balanced)) > 0,])
+
+any(apply(credit.train.balanced, 2, is.na))  # returns TRUE if any element is NA
+
+# Check for NaN values
+any(apply(credit.train.balanced, 2, is.nan))  # returns TRUE if any element is NaN
+
+# Check for Inf values
+any(apply(credit.train.balanced, 2, is.infinite))
+```
+
+## NAIVE BAYES
+
+
+```{r}
+#nbModel <- naiveBayes(x = subset(credit.train.balanced, select = -c(PROFIT_IND,SPLIT,ID,DEFAULT)), y = credit.train.balanced$DEFAULT)
+str(credit.train.balanced)
+```
+```{r}
+#nbModel <- naiveBayes(x = subset(credit.train.balanced, select = -c(PROFIT_IND,SPLIT,ID,DEFAULT)), y = credit.train.balanced$DEFAULT)
+nbModel <- naiveBayes(DEFAULT~. , data = scale(subset(credit.train.balanced, select = -c(PROFIT_LOSS))), laplace = 1)
+predictions <- predict(nbModel, newdata = scale(subset(credit.val, select = -c(PROFIT_LOSS))), type = "raw")
+predictions
+length(predictions)
+print(predictions)
+confusionMatrix(predictions,credit.val$DEFAULT)
+```
+```{r}
+
+```
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+# Split the data into a training set and a test set
+set.seed(123)
+
+# Define the hyperparameter grid
+#paramGrid <- expand.grid(fL=c(0,0.5,1.0), usekernel = c(FALSE), adjust=c(0,0.5,1.0))
+paramGrid <- expand.grid(usekernel = c(TRUE, FALSE),fL=c(0,0.5,1.0),adjust=c(0,0.5,1.0))
+
+# Use the train() function to perform the grid search
+model <- train(DEFAULT~. , data = subset(credit.train.balanced, select = -c(PROFIT_LOSS)), method = "nb", metric ='Accuracy', tuneGrid = paramGrid, trControl = trainControl(method = "cv", number = 2), preProcess = c("center", "scale"), distribution = "gaussian")
+
+y# Print the results of the grid search
+print(model)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+#nbModel <- naiveBayes(x = subset(credit.train.balanced, select = -c(PROFIT_IND,SPLIT,ID,DEFAULT)), y = credit.train.balanced$DEFAULT)
+#model.svm <- svm(DEFAULT~CREDIT_UTILIZATION + LOAN_PER_BORROWER , data = subset(credit.train.balanced, select = -c(PROFIT_LOSS,TYP_RES,ST_EMPL)), kernel = "radial")
+#predictions <- predict(model.svm, newdata = subset(credit.val, select = c(CREDIT_UTILIZATION, LOAN_PER_BORROWER)), type = "class")
+
+model.svm <- svm(DEFAULT~CREDIT_UTILIZATION + LOAN_PER_BORROWER , data = subset(credit.train.balanced, select = -c(PROFIT_LOSS,TYP_RES,ST_EMPL)), kernel = "radial")
+predictions <- predict(model.svm, newdata = subset(credit.val, select = c(CREDIT_UTILIZATION, LOAN_PER_BORROWER)), type = "class")
+
+
+predictions
+length(predictions)
+print(predictions)
+confusionMatrix(predictions,credit.val$DEFAULT)
+```
+
+```{r}
+ctrl <- trainControl(method="repeatedcv",   # 10fold cross validation
+                     repeats=5,         # do 5 repetitions of cv
+                     summaryFunction=twoClassSummary,   # Use AUC to pick the best model
+                     classProbs=TRUE)
+
+svm.tune <- train(DEFAULT~. ,
+                  data = subset(credit.train.balanced, select = -c(PROFIT_LOSS)),
+                  method = "svmRadial",   # Radial kernel
+                  tuneLength = 5,                   # 5 values of the cost function
+                  preProc = c("center","scale"),  # Center and scale data
+                  metric="ROC",
+                  trControl=ctrl)
+```
+
+
+```{r}
+# Split the data into a training set and a test set
+set.seed(123)
+
+# Define the hyperparameter grid
+#paramGrid <- expand.grid(fL=c(0,0.5,1.0), usekernel = c(FALSE), adjust=c(0,0.5,1.0))
+paramGrid <- expand.grid(C = c(0.01, 0.1, 1, 10))
+
+# Use the train() function to perform the grid search
+model <- train(DEFAULT~. , data = subset(credit.train.balanced, select = -c(PROFIT_LOSS)), method = "svmLinear", metric ='Accuracy', tuneGrid = paramGrid, trControl = trainControl(method = "cv", number = 1), preProcess = c("center", "scale"), distribution = "gaussian")
+
+y# Print the results of the grid search
+print(model)
+predictions <- predict(model, credit.val)
+```
+
+
+
+
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
